@@ -70,104 +70,71 @@
 #endif
 
 
-struct client_t
-{
-  int inuse;
-  SOCKET csock, osock;
-  time_t activity;
-};
 
 #define MAXCLIENTS 20
 #define IDLETIMEOUT 300
 
 
-const char ident[] = "$Id: datapipe.c,v 1.8 1999/01/29 01:21:54 jlawson Exp $";
+const char ident[] = "$Id: revdatapipe.c,v 1.0 2018/01/01 01:01:01 h4x0r Exp $";
 
 int main(int argc, char *argv[])
 { 
-  SOCKET lsock;
-  char buf[4096];
-  struct sockaddr_in laddr, oaddr;
-  int i;
-  struct client_t clients[MAXCLIENTS];
-
+    char buf[4096];
+    struct sockaddr_in dest[2];
+    SOCKET sockfd[2];    
+    SOCKET maxsock = 0;
+    int i;
 
 #if defined(__WIN32__) || defined(WIN32) || defined(_WIN32)
-  /* Winsock needs additional startup activities */
-  WSADATA wsadata;
-  WSAStartup(MAKEWORD(1,1), &wsadata);
+    /* Winsock needs additional startup activities */
+    WSADATA wsadata;
+    WSAStartup(MAKEWORD(1,1), &wsadata);
 #endif
 
 
   /* check number of command line arguments */
-  if (argc != 5) {
-    fprintf(stderr,"Usage: %s localhost localport remotehost remoteport\n",argv[0]);
-    return 30;
-  }
+    if (5 != argc) 
+    {
+        fprintf(stderr, "Usage: %s remotehost1 remoteport1 remotehost2 remoteport2\n", argv[0]);
+        return 30;
+    }
 
+    /* connect to servers */
+    for(i = 0; i < 2; ++i)
+    {
+        bzero(&dest[i], sizeof(dest[i]));
+        dest[i].sin_family = AF_INET;
+        dest[i].sin_port = htons((unsigned short) atol(argv[2 + i * 2]));
+        if (!dest[i].sin_port)
+        {
+            fprintf(stderr, "invalid target port\n");
+            return 25;
+        }
+        dest[i].sin_addr.s_addr = inet_addr(argv[1 + i * 2]);
+        if (dest[i].sin_addr.s_addr == INADDR_NONE)
+        {
+            struct hostent *n;
+            if (NULL == (n = gethostbyname(argv[1 + i * 2])))
+            {
+              perror("gethostbyname");
+              return 25;
+            }    
+            bcopy(n->h_addr, (char *) &dest[i].sin_addr, n->h_length);
+        }
 
-  /* reset all of the client structures */
-  for (i = 0; i < MAXCLIENTS; i++)
-    clients[i].inuse = 0;
-
-
-  /* determine the listener address and port */
-  bzero(&laddr, sizeof(struct sockaddr_in));
-  laddr.sin_family = AF_INET;
-  laddr.sin_port = htons((unsigned short) atol(argv[2]));
-  laddr.sin_addr.s_addr = inet_addr(argv[1]);
-  if (!laddr.sin_port) {
-    fprintf(stderr, "invalid listener port\n");
-    return 20;
-  }
-  if (laddr.sin_addr.s_addr == INADDR_NONE) {
-    struct hostent *n;
-    if ((n = gethostbyname(argv[1])) == NULL) {
-      perror("gethostbyname");
-      return 20;
-    }    
-    bcopy(n->h_addr, (char *) &laddr.sin_addr, n->h_length);
-  }
-
-
-  /* determine the outgoing address and port */
-  bzero(&oaddr, sizeof(struct sockaddr_in));
-  oaddr.sin_family = AF_INET;
-  oaddr.sin_port = htons((unsigned short) atol(argv[4]));
-  if (!oaddr.sin_port) {
-    fprintf(stderr, "invalid target port\n");
-    return 25;
-  }
-  oaddr.sin_addr.s_addr = inet_addr(argv[3]);
-  if (oaddr.sin_addr.s_addr == INADDR_NONE) {
-    struct hostent *n;
-    if ((n = gethostbyname(argv[3])) == NULL) {
-      perror("gethostbyname");
-      return 25;
-    }    
-    bcopy(n->h_addr, (char *) &oaddr.sin_addr, n->h_length);
-  }
-
-
-  /* create the listener socket */
-  if ((lsock = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-    perror("socket");
-    return 20;
-  }
-  if (bind(lsock, (struct sockaddr *)&laddr, sizeof(laddr))) {
-    perror("bind");
-    return 20;
-  }
-  if (listen(lsock, 5)) {
-    perror("listen");
-    return 20;
-  }
-
-
-  /* change the port in the listener struct to zero, since we will
-   * use it for binding to outgoing local sockets in the future. */
-  laddr.sin_port = htons(0);
-
+        if ((sockfd[i] = socket(AF_INET, SOCK_STREAM, 0)) < 0) 
+        {
+            perror("socket");
+            return -1;
+        }
+        if (sockfd[i] > maxsock)
+            maxsock = sockfd[i];
+        if (connect(sockfd[i], (struct sockaddr *)&dest[i], sizeof(dest[i])))
+        {
+            perror("connect");
+            closesocket(sockfd[i]);
+        }
+    }
 
   /* fork off into the background. */
 #if !defined(__WIN32__) && !defined(WIN32) && !defined(_WIN32)
@@ -180,96 +147,38 @@ int main(int argc, char *argv[])
   setsid();
 #endif
 
-  
-  /* main polling loop. */
-  while (1)
-  {
     fd_set fdsr;
-    int maxsock;
-    struct timeval tv = {1,0};
-    time_t now = time(NULL);
 
-    /* build the list of sockets to check. */
-    FD_ZERO(&fdsr);
-    FD_SET(lsock, &fdsr);
-    maxsock = (int) lsock;
-    for (i = 0; i < MAXCLIENTS; i++)
-      if (clients[i].inuse) {
-        FD_SET(clients[i].csock, &fdsr);
-        if ((int) clients[i].csock > maxsock)
-          maxsock = (int) clients[i].csock;
-        FD_SET(clients[i].osock, &fdsr);
-        if ((int) clients[i].osock > maxsock)
-          maxsock = (int) clients[i].osock;
-      }      
-    if (select(maxsock + 1, &fdsr, NULL, NULL, &tv) < 0) {
-      return 30;
-    }
-
-
-    /* check if there are new connections to accept. */
-    if (FD_ISSET(lsock, &fdsr))
+    /* main polling loop. */
+    while (1)
     {
-      SOCKET csock = accept(lsock, NULL, 0);
-     
-      for (i = 0; i < MAXCLIENTS; i++)
-        if (!clients[i].inuse) break;
-      if (i < MAXCLIENTS)
-      {
-        /* connect a socket to the outgoing host/port */
-        SOCKET osock;
-        if ((osock = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-          perror("socket");
-          closesocket(csock);
+        /* build the list of sockets to check. */
+        FD_ZERO(&fdsr);
+        FD_SET(sockfd[0], &fdsr);
+        FD_SET(sockfd[1], &fdsr);
+        if (select(maxsock + 1, &fdsr, NULL, NULL, NULL) < 0) {
+            return 30;
         }
-        else if (bind(osock, (struct sockaddr *)&laddr, sizeof(laddr))) {
-          perror("bind");
-          closesocket(csock);
-          closesocket(osock);
-        }
-        else if (connect(osock, (struct sockaddr *)&oaddr, sizeof(oaddr))) {
-          perror("connect");
-          closesocket(csock);
-          closesocket(osock);
-        }
-        else {
-          clients[i].osock = osock;
-          clients[i].csock = csock;
-          clients[i].activity = now;
-          clients[i].inuse = 1;
-        }
-      } else {
-        fprintf(stderr, "too many clients\n");
-        closesocket(csock);
-      }        
-    }
 
 
-    /* service any client connections that have waiting data. */
-    for (i = 0; i < MAXCLIENTS; i++)
-    {
-      int nbyt, closeneeded = 0;
-      if (!clients[i].inuse) {
-        continue;
-      } else if (FD_ISSET(clients[i].csock, &fdsr)) {
-        if ((nbyt = recv(clients[i].csock, buf, sizeof(buf), 0)) <= 0 ||
-          send(clients[i].osock, buf, nbyt, 0) <= 0) closeneeded = 1;
-        else clients[i].activity = now;
-      } else if (FD_ISSET(clients[i].osock, &fdsr)) {
-        if ((nbyt = recv(clients[i].osock, buf, sizeof(buf), 0)) <= 0 ||
-          send(clients[i].csock, buf, nbyt, 0) <= 0) closeneeded = 1;
-        else clients[i].activity = now;
-      } else if (now - clients[i].activity > IDLETIMEOUT) {
-        closeneeded = 1;
-      }
-      if (closeneeded) {
-        closesocket(clients[i].csock);
-        closesocket(clients[i].osock);
-        clients[i].inuse = 0;
-      }      
+        int nbyt, closeneeded = 0;
+        if (FD_ISSET(sockfd[0], &fdsr))
+        {
+            if ((nbyt = recv(sockfd[0], buf, sizeof(buf), 0)) <= 0 || send(sockfd[1], buf, nbyt, 0) <= 0) 
+                closeneeded = 1;
+        }
+        else if (FD_ISSET(sockfd[1], &fdsr))
+        {
+            if ((nbyt = recv(sockfd[1], buf, sizeof(buf), 0)) <= 0 || send(sockfd[0], buf, nbyt, 0) <= 0) 
+                closeneeded = 1;
+        }
+        if (closeneeded) 
+        {
+            closesocket(sockfd[0]);
+            closesocket(sockfd[1]);
+        }      
     }
     
-  }
   return 0;
 }
 
