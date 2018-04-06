@@ -99,6 +99,7 @@ int main(int argc, char *argv[])
 #endif
 
     fd_set fdsr;
+    int nbyt, closeneeded = 0;
 
     /* main polling loop. */
     while (1)
@@ -110,8 +111,9 @@ int main(int argc, char *argv[])
             return -1;
         }
 
+        nbyt = 0;
+        closeneeded = 0;
 
-        int nbyt, closeneeded = 0;
         if (FD_ISSET(sockfd[0], &fdsr))
         {
             if ((nbyt = recv(sockfd[0], buf, sizeof(buf), 0)) <= 0 || send(sockfd[1], buf, nbyt, 0) <= 0) 
