@@ -42,6 +42,7 @@ int main(int argc, char *argv[])
     WSAStartup(MAKEWORD(1,1), &wsadata);
 #endif
 
+    
 
     /* check number of command line arguments */
     if (5 != argc) 
@@ -86,17 +87,6 @@ int main(int argc, char *argv[])
             closesocket(sockfd[i]);
         }
     }
-
-    /* fork off into the background. */
-#if !defined(__WIN32__) && !defined(WIN32) && !defined(_WIN32)
-    if ((i = fork()) == -1) {
-        perror("fork");
-        return -1;
-    }
-    if (i > 0)
-        return 0;
-    setsid();
-#endif
 
     fd_set fdsr;
     int nbyt, closeneeded = 0;
