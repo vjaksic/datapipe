@@ -1,3 +1,10 @@
+#include <openssl/bio.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509_vfy.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -87,6 +94,8 @@ int main(int argc, char *argv[])
             closesocket(sockfd[i]);
         }
     }
+
+    // openssl goes after connect
 
     fd_set fdsr;
     int nbyt, closeneeded = 0;
